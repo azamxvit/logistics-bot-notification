@@ -35,10 +35,16 @@ async def _on_startup(application: Application) -> None:
     from core.logger import logger
 
     cfg = get_settings()
-    if not cfg.database_url_env:
-        logger.warning(
-            "DATABASE_URL не задан — используется localhost. "
-            "На Railway добавьте reference: cargobot-db → DATABASE_URL"
+    logger.info(
+        "Env check: DATABASE_URL=%s, REDIS_URL=%s, RAILWAY=%s",
+        "set" if cfg.raw_database_url else "MISSING",
+        "set" if cfg.redis_url_env else "missing",
+        cfg.railway_environment or "no",
+    )
+    if not cfg.raw_database_url and not cfg.pg_host:
+        logger.error(
+            "DATABASE_URL не задан в сервисе cargobot. "
+            "Variables → Add Reference → cargobot-db → DATABASE_URL"
         )
     if not cfg.redis_url_env:
         logger.warning(

@@ -1,6 +1,7 @@
+import os
 import ssl
 from functools import lru_cache
-from urllib.parse import parse_qs, urlparse, urlunparse
+from urllib.parse import parse_qs, quote_plus, urlparse, urlunparse
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -31,7 +32,6 @@ def database_connect_args(url: str) -> dict:
     if host in {"localhost", "127.0.0.1", "postgres"}:
         return {}
 
-    # Railway public proxy и облачные Postgres требуют SSL
     needs_ssl = (
         host.endswith(".proxy.rlwy.net")
         or host.endswith(".render.com")
@@ -54,7 +54,18 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
 
     database_url_env: str | None = Field(default=None, alias="DATABASE_URL")
+    database_private_url: str | None = Field(default=None, alias="DATABASE_PRIVATE_URL")
+    database_public_url: str | None = Field(default=None, alias="DATABASE_PUBLIC_URL")
+
+    pg_host: str | None = Field(default=None, alias="PGHOST")
+    pg_port: int | None = Field(default=None, alias="PGPORT")
+    pg_user: str | None = Field(default=None, alias="PGUSER")
+    pg_password: str | None = Field(default=None, alias="PGPASSWORD")
+    pg_database: str | None = Field(default=None, alias="PGDATABASE")
+
     redis_url_env: str | None = Field(default=None, alias="REDIS_URL")
+
+    railway_environment: str | None = Field(default=None, alias="RAILWAY_ENVIRONMENT")
 
     postgres_host: str = "localhost"
     postgres_port: int = 5432
@@ -95,9 +106,43 @@ class Settings(BaseSettings):
         return bool(value)
 
     @property
+    def is_railway(self) -> bool:
+        return bool(self.railway_environment or os.getenv("RAILWAY_SERVICE_ID"))
+
+    @property
+    def raw_database_url(self) -> str | None:
+        for value in (
+            self.database_url_env,
+            self.database_private_url,
+            self.database_public_url,
+        ):
+            if value and value.strip():
+                return value.strip()
+        return None
+
+    @property
     def database_url(self) -> str:
-        if self.database_url_env:
-            return _to_asyncpg_url(self.database_url_env)
+        raw = self.raw_database_url
+        if raw:
+            return _to_asyncpg_url(raw)
+
+        if self.pg_host:
+            user = quote_plus(self.pg_user or "postgres")
+            password = quote_plus(self.pg_password or "")
+            port = self.pg_port or 5432
+            database = self.pg_database or "railway"
+            return (
+                f"postgresql+asyncpg://{user}:{password}"
+                f"@{self.pg_host}:{port}/{database}"
+            )
+
+        if self.is_railway:
+            raise ValueError(
+                "DATABASE_URL не передан в контейнер cargobot.\n"
+                "Railway → сервис cargobot → Variables → Add Reference → "
+                "cargobot-db → DATABASE_URL → Deploy."
+            )
+
         return (
             f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
@@ -105,7 +150,7 @@ class Settings(BaseSettings):
 
     @property
     def database_ssl_args(self) -> dict:
-        source = self.database_url_env or self.database_url
+        source = self.raw_database_url or self.database_url
         return database_connect_args(source)
 
     @property
@@ -116,8 +161,11 @@ class Settings(BaseSettings):
 
     @property
     def database_host_label(self) -> str:
-        if self.database_url_env:
-            return urlparse(self.database_url_env).hostname or "unknown"
+        raw = self.raw_database_url
+        if raw:
+            return urlparse(raw).hostname or "unknown"
+        if self.pg_host:
+            return self.pg_host
         return self.postgres_host
 
 
