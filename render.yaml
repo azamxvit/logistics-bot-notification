@@ -1,0 +1,28 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+# Worker (бот) + PostgreSQL. Redis — Upstash (бесплатно): https://upstash.com
+
+services:
+  - type: worker
+    name: cargobot
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: ENABLE_DEMO_SOURCE
+        value: "true"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: cargobot-db
+          property: connectionString
+      - key: LOG_LEVEL
+        value: INFO
+
+databases:
+  - name: cargobot-db
+    plan: free
+    databaseName: cargobot
+    user: cargobot
