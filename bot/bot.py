@@ -1,3 +1,4 @@
+from telegram import BotCommand
 from telegram.ext import Application
 
 from bot.handlers import get_handlers
@@ -5,6 +6,12 @@ from core.config import get_settings
 from core.redis_client import RedisClient
 from services.filtering import FilteringService
 from services.scheduler import setup_scheduler
+
+BOT_COMMANDS = [
+    BotCommand("start", "Запустить бота и показать помощь"),
+    BotCommand("truck", "Настроить параметры фуры"),
+    BotCommand("cancel", "Отменить текущую настройку"),
+]
 
 
 def create_application() -> Application:
@@ -53,6 +60,10 @@ async def _on_startup(application: Application) -> None:
         )
 
     await init_db()
+
+    await application.bot.set_my_commands(BOT_COMMANDS)
+    logger.info("Bot command menu registered")
+
     redis: RedisClient = application.bot_data["redis_client"]
     if await redis.ping():
         logger.info("Redis connected")
