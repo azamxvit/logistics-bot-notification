@@ -30,8 +30,21 @@ def create_application() -> Application:
 
 
 async def _on_startup(application: Application) -> None:
+    from core.config import get_settings
     from core.database import init_db
     from core.logger import logger
+
+    cfg = get_settings()
+    if not cfg.database_url_env:
+        logger.warning(
+            "DATABASE_URL не задан — используется localhost. "
+            "На Railway добавьте reference: cargobot-db → DATABASE_URL"
+        )
+    if not cfg.redis_url_env:
+        logger.warning(
+            "REDIS_URL не задан — дедупликация может не работать. "
+            "Добавьте Redis-сервис и REDIS_URL"
+        )
 
     await init_db()
     redis: RedisClient = application.bot_data["redis_client"]
