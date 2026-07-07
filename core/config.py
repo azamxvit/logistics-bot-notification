@@ -3,7 +3,7 @@ import ssl
 from functools import lru_cache
 from urllib.parse import parse_qs, quote_plus, urlparse, urlunparse
 
-from pydantic import Field, field_validator
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -44,6 +44,15 @@ def database_connect_args(url: str) -> dict:
     return {}
 
 
+def _env(*names: str) -> str | None:
+    """Первое непустое значение из переменных окружения."""
+    for name in names:
+        value = os.getenv(name)
+        if value and value.strip():
+            return value.strip()
+    return None
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -52,20 +61,6 @@ class Settings(BaseSettings):
     )
 
     telegram_bot_token: str = ""
-
-    database_url_env: str | None = Field(default=None, alias="DATABASE_URL")
-    database_private_url: str | None = Field(default=None, alias="DATABASE_PRIVATE_URL")
-    database_public_url: str | None = Field(default=None, alias="DATABASE_PUBLIC_URL")
-
-    pg_host: str | None = Field(default=None, alias="PGHOST")
-    pg_port: int | None = Field(default=None, alias="PGPORT")
-    pg_user: str | None = Field(default=None, alias="PGUSER")
-    pg_password: str | None = Field(default=None, alias="PGPASSWORD")
-    pg_database: str | None = Field(default=None, alias="PGDATABASE")
-
-    redis_url_env: str | None = Field(default=None, alias="REDIS_URL")
-
-    railway_environment: str | None = Field(default=None, alias="RAILWAY_ENVIRONMENT")
 
     postgres_host: str = "localhost"
     postgres_port: int = 5432
@@ -107,18 +102,11 @@ class Settings(BaseSettings):
 
     @property
     def is_railway(self) -> bool:
-        return bool(self.railway_environment or os.getenv("RAILWAY_SERVICE_ID"))
+        return bool(_env("RAILWAY_ENVIRONMENT", "RAILWAY_SERVICE_ID", "RAILWAY_PROJECT_ID"))
 
     @property
     def raw_database_url(self) -> str | None:
-        for value in (
-            self.database_url_env,
-            self.database_private_url,
-            self.database_public_url,
-        ):
-            if value and value.strip():
-                return value.strip()
-        return None
+        return _env("DATABASE_URL", "DATABASE_PRIVATE_URL", "DATABASE_PUBLIC_URL")
 
     @property
     def database_url(self) -> str:
@@ -126,27 +114,22 @@ class Settings(BaseSettings):
         if raw:
             return _to_asyncpg_url(raw)
 
-        if self.pg_host:
-            user = quote_plus(self.pg_user or "postgres")
-            password = quote_plus(self.pg_password or "")
-            port = self.pg_port or 5432
-            database = self.pg_database or "railway"
-            return (
-                f"postgresql+asyncpg://{user}:{password}"
-                f"@{self.pg_host}:{port}/{database}"
-            )
-
-        if self.is_railway:
-            raise ValueError(
-                "DATABASE_URL не передан в контейнер cargobot.\n"
-                "Railway → сервис cargobot → Variables → Add Reference → "
-                "cargobot-db → DATABASE_URL → Deploy."
-            )
+        pg_host = _env("PGHOST")
+        if pg_host:
+            user = quote_plus(_env("PGUSER") or "postgres")
+            password = quote_plus(_env("PGPASSWORD") or "")
+            port = _env("PGPORT") or "5432"
+            database = _env("PGDATABASE") or "railway"
+            return f"postgresql+asyncpg://{user}:{password}@{pg_host}:{port}/{database}"
 
         return (
             f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
+
+    @property
+    def has_database_config(self) -> bool:
+        return bool(self.raw_database_url or _env("PGHOST")) or not self.is_railway
 
     @property
     def database_ssl_args(self) -> dict:
@@ -155,18 +138,18 @@ class Settings(BaseSettings):
 
     @property
     def redis_url(self) -> str:
-        if self.redis_url_env:
-            return self.redis_url_env
+        raw = _env("REDIS_URL", "REDIS_PRIVATE_URL", "REDIS_PUBLIC_URL")
+        if raw:
+            return raw
         return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
 
     @property
+    def has_redis_config(self) -> bool:
+        return bool(_env("REDIS_URL", "REDIS_PRIVATE_URL", "REDIS_PUBLIC_URL")) or not self.is_railway
+
+    @property
     def database_host_label(self) -> str:
-        raw = self.raw_database_url
-        if raw:
-            return urlparse(raw).hostname or "unknown"
-        if self.pg_host:
-            return self.pg_host
-        return self.postgres_host
+        return urlparse(self.database_url).hostname or "unknown"
 
 
 @lru_cache

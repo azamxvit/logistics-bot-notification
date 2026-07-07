@@ -36,20 +36,20 @@ async def _on_startup(application: Application) -> None:
 
     cfg = get_settings()
     logger.info(
-        "Env check: DATABASE_URL=%s, REDIS_URL=%s, RAILWAY=%s",
-        "set" if cfg.raw_database_url else "MISSING",
-        "set" if cfg.redis_url_env else "missing",
-        cfg.railway_environment or "no",
+        "Env check: database=%s, redis=%s, railway=%s",
+        "ok" if cfg.has_database_config else "MISSING",
+        "ok" if cfg.has_redis_config else "missing",
+        "yes" if cfg.is_railway else "no",
     )
-    if not cfg.raw_database_url and not cfg.pg_host:
+    if not cfg.has_database_config:
         logger.error(
             "DATABASE_URL не задан в сервисе cargobot. "
-            "Variables → Add Reference → cargobot-db → DATABASE_URL"
+            "Variables → Add Reference → cargobot-db → DATABASE_URL → Deploy"
         )
-    if not cfg.redis_url_env:
+    if not cfg.has_redis_config:
         logger.warning(
             "REDIS_URL не задан — дедупликация может не работать. "
-            "Добавьте Redis-сервис и REDIS_URL"
+            "Добавьте Redis-сервис и reference REDIS_URL"
         )
 
     await init_db()
