@@ -11,6 +11,7 @@ from bot.handlers.truck.states import (
     CERTIFICATIONS,
     CONFIRM,
     DESTINATIONS,
+    LOCATION_CITY,
     MENU,
     MIN_RATE,
     ORIGINS,
@@ -142,6 +143,88 @@ async def handle_menu_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if profile_id is None:
         return MENU
     return await menu.render_search_window(update, context, profile_id)
+
+
+async def handle_menu_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    from bot.handlers.location.handlers import _city_keyboard
+
+    query = update.callback_query
+    user = update.effective_user
+    profile_id = _extract_id(update)
+    if not query or not user or profile_id is None:
+        return MENU
+
+    async with async_session_factory() as session:
+        truck = await TruckRepository(session).get_by_id(profile_id, user.id)
+
+    if not truck:
+        await query.answer("Фура не найдена")
+        return MENU
+
+    context.user_data["location_truck_id"] = truck.id
+    context.user_data["location_truck_label"] = truck.label
+    context.user_data["location_return_menu"] = True
+    current = truck.current_city or "не задан"
+    await query.answer()
+    await query.edit_message_text(
+        f"📍 *{truck.label}*\n"
+        f"Сейчас: *{current}*\n\n"
+        "Введите город, где стоит фура.\n"
+        "_Пример: Атырау, Алматы, Махамбет_\n\n"
+        "Заявки только с погрузкой из этого города.",
+        parse_mode="Markdown",
+        reply_markup=_city_keyboard(truck.id),
+    )
+    return LOCATION_CITY
+
+
+async def handle_truck_location_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not update.message or not update.effective_user:
+        return LOCATION_CITY
+
+    city = (update.message.text or "").strip()
+    if len(city) < 2:
+        await update.message.reply_text("❌ Введите название города, например: Атырау")
+        return LOCATION_CITY
+
+    profile_id = context.user_data.get("location_truck_id")
+    label = context.user_data.get("location_truck_label", "Фура")
+    if not profile_id:
+        return await menu.render_menu(update, context)
+
+    async with async_session_factory() as session:
+        truck = await TruckRepository(session).set_current_city(
+            profile_id, update.effective_user.id, city
+        )
+
+    if not truck:
+        await update.message.reply_text("❌ Фура не найдена.")
+        return MENU
+
+    context.user_data.pop("location_return_menu", None)
+    context.user_data.pop("location_truck_id", None)
+    context.user_data.pop("location_truck_label", None)
+    logger.info("User %s set location %s for truck %s", update.effective_user.id, city, profile_id)
+    await update.message.reply_text(
+        f"✅ *{label}* — город: *{city}*\n\n"
+        "Заявки с погрузкой только из этого города.",
+        parse_mode="Markdown",
+    )
+    return await menu.render_menu(update, context)
+
+
+async def handle_truck_location_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    user = update.effective_user
+    if not query or not query.data or not user:
+        return LOCATION_CITY
+
+    profile_id = int(query.data.rsplit(":", 1)[-1])
+    async with async_session_factory() as session:
+        await TruckRepository(session).clear_current_city(profile_id, user.id)
+
+    await query.answer("Город сброшен")
+    return await menu.render_menu(update, context)
 
 
 async def handle_menu_close(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

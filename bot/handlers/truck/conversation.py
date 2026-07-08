@@ -11,6 +11,7 @@ from bot.handlers.truck.states import (
     MIN_RATE,
     ORIGINS,
     SEARCH_WINDOW,
+    LOCATION_CITY,
     TONNAGE,
     VOLUME,
 )
@@ -31,6 +32,7 @@ def _menu_handlers() -> list:
         CallbackQueryHandler(handlers.handle_menu_edit, pattern=r"^truck:menu:edit:\d+$"),
         CallbackQueryHandler(handlers.handle_menu_delete, pattern=r"^truck:menu:del:\d+$"),
         CallbackQueryHandler(handlers.handle_menu_time, pattern=r"^truck:menu:time:\d+$"),
+        CallbackQueryHandler(handlers.handle_menu_location, pattern=r"^truck:menu:loc:\d+$"),
         CallbackQueryHandler(handlers.handle_menu_list, pattern=r"^truck:menu:list$"),
         CallbackQueryHandler(handlers.handle_menu_close, pattern=r"^truck:menu:close$"),
     ]
@@ -91,6 +93,11 @@ def build_truck_conversation() -> ConversationHandler:
                 ),
                 CallbackQueryHandler(handlers.handle_menu_list, pattern=r"^truck:menu:list$"),
                 *nav_handlers,
+            ],
+            LOCATION_CITY: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_truck_location_city),
+                CallbackQueryHandler(handlers.handle_truck_location_clear, pattern=r"^loc:clear:\d+$"),
+                CallbackQueryHandler(handlers.handle_cancel, pattern=CANCEL_PATTERN),
             ],
         },
         fallbacks=[

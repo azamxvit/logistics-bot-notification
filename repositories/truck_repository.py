@@ -185,3 +185,25 @@ class TruckRepository:
         if profile:
             profile.is_active = False
             await self._session.commit()
+
+    async def set_current_city(
+        self, profile_id: int, telegram_user_id: int, city: str
+    ) -> TruckProfile | None:
+        profile = await self.get_by_id(profile_id, telegram_user_id)
+        if not profile:
+            return None
+        profile.current_city = city.strip()
+        await self._session.commit()
+        await self._session.refresh(profile)
+        return profile
+
+    async def clear_current_city(
+        self, profile_id: int, telegram_user_id: int
+    ) -> TruckProfile | None:
+        profile = await self.get_by_id(profile_id, telegram_user_id)
+        if not profile:
+            return None
+        profile.current_city = None
+        await self._session.commit()
+        await self._session.refresh(profile)
+        return profile

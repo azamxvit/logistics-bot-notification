@@ -10,7 +10,8 @@
     DESTINATIONS,
     CONFIRM,
     SEARCH_WINDOW,
-) = range(11)
+    LOCATION_CITY,
+) = range(12)
 
 # Карта «Назад» внутри мастера настройки
 PREVIOUS_STATE: dict[int, int | None] = {

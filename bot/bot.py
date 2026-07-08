@@ -9,7 +9,8 @@ from services.scheduler import setup_scheduler
 
 BOT_COMMANDS = [
     BotCommand("start", "Запустить бота и показать помощь"),
-    BotCommand("truck", "Настроить параметры фуры"),
+    BotCommand("truck", "Ваши фуры (до 3): добавить, настроить"),
+    BotCommand("location", "Где стоит фура (город погрузки)"),
     BotCommand("cancel", "Отменить текущую настройку"),
 ]
 

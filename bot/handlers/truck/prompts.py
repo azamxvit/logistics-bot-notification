@@ -27,7 +27,8 @@ def prompt_menu(trucks: list, max_trucks: int) -> str:
             status = f"🟢 ищет до {until} UTC"
         else:
             status = "⚪️ поиск выключен"
-        lines.append(f"• *{truck.label}* — {truck.tonnage_tons:g}т, {status}")
+        loc = f" | 📍{truck.current_city}" if truck.current_city else ""
+        lines.append(f"• *{truck.label}* — {truck.tonnage_tons:g}т, {status}{loc}")
     lines.append(f"\nВсего: {len(trucks)}/{max_trucks}. Нажмите на фуру для деталей.")
     return "\n".join(lines)
 
@@ -45,9 +46,12 @@ def prompt_truck_detail(truck) -> str:
     else:
         status = "⚪️ поиск выключен"
 
+    loc_line = f"• Где стоит: *{truck.current_city}*\n" if truck.current_city else "• Где стоит: _не задано_\n"
+
     return (
         f"🚛 *{truck.label}*\n"
         f"Статус: {status}\n\n"
+        f"{loc_line}"
         f"• Грузоподъёмность: *{truck.tonnage_tons:g}* т\n"
         f"• Объём: *{truck.volume_m3:g}* м³\n"
         f"• Тип кузова: *{body}*\n"

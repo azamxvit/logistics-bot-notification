@@ -22,10 +22,11 @@ def menu_keyboard(trucks: list, can_add: bool) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for truck in trucks:
         mark = "🟢" if getattr(truck, "is_active", False) else "⚪️"
+        loc = f" | 📍{truck.current_city}" if getattr(truck, "current_city", None) else ""
         rows.append(
             [
                 InlineKeyboardButton(
-                    f"{mark} {truck.label} ({truck.tonnage_tons:g}т)",
+                    f"{mark} {truck.label} ({truck.tonnage_tons:g}т){loc}",
                     callback_data=f"truck:menu:view:{truck.id}",
                 )
             ]
@@ -40,6 +41,7 @@ def truck_detail_keyboard(profile_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
+                InlineKeyboardButton("📍 Где стоит", callback_data=f"truck:menu:loc:{profile_id}"),
                 InlineKeyboardButton("🔍 Время поиска", callback_data=f"truck:menu:time:{profile_id}"),
             ],
             [

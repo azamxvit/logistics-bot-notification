@@ -26,7 +26,17 @@ class FilteringService:
             return False
         if not self._matches_route(request, profile):
             return False
+        if not self._matches_current_city(request, profile):
+            return False
         return True
+
+    def _matches_current_city(self, request: CargoRequest, profile: TruckProfile) -> bool:
+        """Если задан current_city — погрузка только из этого города."""
+        from services.city_match import city_matches
+
+        if not profile.current_city:
+            return True
+        return city_matches(request.origin_city, profile.current_city)
 
     def _resolve_cargo_type(self, request: CargoRequest) -> str:
         return detect_cargo_type(request.cargo_description, request.cargo_type)

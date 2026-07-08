@@ -63,6 +63,11 @@ MIGRATIONS: list[str] = [
     SET label = 'Фура 1'
     WHERE label = 'Фура'
     """,
+    # Геофильтр: город где стоит фура
+    """
+    ALTER TABLE truck_profiles
+    ADD COLUMN IF NOT EXISTS current_city VARCHAR(255)
+    """,
 ]
 
 

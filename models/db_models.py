@@ -67,6 +67,8 @@ class TruckProfile(Base):
     min_rate_per_km: Mapped[float | None] = mapped_column(Float, nullable=True)
     origin_cities: Mapped[str | None] = mapped_column(Text, nullable=True)
     destination_cities: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Город, где сейчас стоит фура (геофильтр: погрузка только из этого города)
+    current_city: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false"
     )
