@@ -9,27 +9,29 @@ from bot.handlers.truck.keyboards import (
     confirm_keyboard,
     text_step_keyboard,
 )
+from bot.handlers.truck.navigation import send_step
 from bot.handlers.truck.states import (
     BODY_TYPE,
     CARGO_TYPES,
     CERTIFICATIONS,
     CONFIRM,
     DESTINATIONS,
+    MENU,
     MIN_RATE,
     ORIGINS,
     TONNAGE,
-    TRUCK_COUNT,
     VOLUME,
 )
-from bot.handlers.truck.navigation import send_step
 
 
 async def show_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state: int) -> int:
     context.user_data["_truck_state"] = state
     data = context.user_data
 
-    if state == TRUCK_COUNT:
-        await send_step(update, prompts.prompt_truck_count(data.get("truck_count")), text_step_keyboard())
+    if state == MENU:
+        from bot.handlers.truck import menu
+
+        return await menu.render_menu(update, context)
     elif state == TONNAGE:
         await send_step(update, prompts.prompt_tonnage(data.get("tonnage")), text_step_keyboard())
     elif state == VOLUME:

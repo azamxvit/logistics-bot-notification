@@ -18,6 +18,51 @@ def with_nav(rows: list[list[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([*rows, nav_row()])
 
 
+def menu_keyboard(trucks: list, can_add: bool) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for truck in trucks:
+        mark = "🟢" if getattr(truck, "is_active", False) else "⚪️"
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    f"{mark} {truck.label} ({truck.tonnage_tons:g}т)",
+                    callback_data=f"truck:menu:view:{truck.id}",
+                )
+            ]
+        )
+    if can_add:
+        rows.append([InlineKeyboardButton("➕ Добавить фуру", callback_data="truck:menu:add")])
+    rows.append([InlineKeyboardButton("✖️ Закрыть", callback_data="truck:menu:close")])
+    return InlineKeyboardMarkup(rows)
+
+
+def truck_detail_keyboard(profile_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("🔍 Время поиска", callback_data=f"truck:menu:time:{profile_id}"),
+            ],
+            [
+                InlineKeyboardButton("✏️ Изменить", callback_data=f"truck:menu:edit:{profile_id}"),
+                InlineKeyboardButton("🗑 Удалить", callback_data=f"truck:menu:del:{profile_id}"),
+            ],
+            [InlineKeyboardButton("⬅️ К списку", callback_data="truck:menu:list")],
+        ]
+    )
+
+
+def search_window_keyboard(profile_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("🔍 1 день", callback_data=f"truck:time:set:{profile_id}:1"),
+                InlineKeyboardButton("🔍 2 дня", callback_data=f"truck:time:set:{profile_id}:2"),
+            ],
+            [InlineKeyboardButton("⬅️ К списку", callback_data="truck:menu:list")],
+        ]
+    )
+
+
 def body_type_keyboard() -> InlineKeyboardMarkup:
     rows = [
         [

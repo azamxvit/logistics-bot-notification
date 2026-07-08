@@ -36,6 +36,7 @@ class CargoRequestCreate(BaseModel):
 
 
 class TruckProfileData(BaseModel):
+    label: str = Field(default="Фура", max_length=100)
     truck_count: int = Field(default=1, ge=1)
     tonnage_tons: float = Field(gt=0)
     volume_m3: float = Field(gt=0)

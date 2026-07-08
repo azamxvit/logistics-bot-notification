@@ -1,25 +1,27 @@
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 
-from bot.handlers.truck import steps
+from bot.handlers.truck import menu, steps
 from bot.handlers.truck.keyboards import cargo_types_keyboard, certifications_keyboard
 from bot.handlers.truck.navigation import cancel_dialog, go_back, send_step
-from bot.handlers.truck.prompts import build_summary, prompt_certifications, prompt_cargo_types
+from bot.handlers.truck.prompts import prompt_certifications, prompt_cargo_types
 from bot.handlers.truck.states import (
     BODY_TYPE,
     CARGO_TYPES,
     CERTIFICATIONS,
     CONFIRM,
     DESTINATIONS,
+    MENU,
     MIN_RATE,
     ORIGINS,
+    SEARCH_WINDOW,
     SKIP_TEXTS,
     TONNAGE,
-    TRUCK_COUNT,
     VOLUME,
 )
 from core.database import async_session_factory
 from core.logger import logger
+from models.db_models import MAX_TRUCKS_PER_USER
 from models.schemas import TruckProfileData
 from repositories.truck_repository import TruckRepository, UserRepository
 
@@ -34,37 +36,123 @@ def _parse_positive_float(text: str) -> float | None:
         return None
 
 
-def _parse_positive_int(text: str) -> int | None:
-    try:
-        value = int(text.strip())
-        if value <= 0:
-            return None
-        return value
-    except (ValueError, AttributeError):
-        return None
+def _reset_wizard(context: ContextTypes.DEFAULT_TYPE) -> None:
+    for key in (
+        "editing_truck_id",
+        "label",
+        "tonnage",
+        "volume",
+        "body_type",
+        "min_rate",
+        "origins",
+        "destinations",
+    ):
+        context.user_data.pop(key, None)
+    context.user_data["certifications"] = []
+    context.user_data["accepted_cargo_types"] = {"general"}
+
+
+# --- Вход и меню ---
 
 
 async def truck_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not update.message or not update.effective_user:
         return ConversationHandler.END
-    context.user_data.clear()
-    context.user_data["certifications"] = []
-    context.user_data["accepted_cargo_types"] = {"general"}
-    return await steps.show_state(update, context, TRUCK_COUNT)
-
-
-async def handle_truck_count(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not update.message:
-        return TRUCK_COUNT
-    count = _parse_positive_int(update.message.text or "")
-    if count is None:
-        await update.message.reply_text(
-            "❌ Нужно целое число больше 0.\n_Пример: 1_",
-            parse_mode="Markdown",
+    user = update.effective_user
+    async with async_session_factory() as session:
+        await UserRepository(session).get_or_create(
+            telegram_user_id=user.id,
+            username=user.username,
+            first_name=user.first_name,
         )
-        return TRUCK_COUNT
-    context.user_data["truck_count"] = count
+    context.user_data.clear()
+    return await menu.render_menu(update, context)
+
+
+async def handle_menu_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    async with async_session_factory() as session:
+        count = await TruckRepository(session).count_by_telegram_id(user.id)
+
+    if count >= MAX_TRUCKS_PER_USER:
+        if update.callback_query:
+            await update.callback_query.answer(
+                f"Достигнут лимит {MAX_TRUCKS_PER_USER} фур. Удалите одну, чтобы добавить новую.",
+                show_alert=True,
+            )
+        return MENU
+
+    _reset_wizard(context)
+    context.user_data["editing_truck_id"] = None
+    context.user_data["label"] = f"Фура {count + 1}"
     return await steps.show_state(update, context, TONNAGE)
+
+
+async def handle_menu_view(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    profile_id = _extract_id(update)
+    if profile_id is None:
+        return MENU
+    return await menu.render_truck_detail(update, context, profile_id)
+
+
+async def handle_menu_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    return await menu.render_menu(update, context)
+
+
+async def handle_menu_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    profile_id = _extract_id(update)
+    user = update.effective_user
+    if profile_id is None:
+        return MENU
+
+    async with async_session_factory() as session:
+        truck = await TruckRepository(session).get_by_id(profile_id, user.id)
+
+    if not truck:
+        return await menu.render_menu(update, context)
+
+    _reset_wizard(context)
+    context.user_data["editing_truck_id"] = truck.id
+    context.user_data["label"] = truck.label
+    context.user_data["tonnage"] = truck.tonnage_tons
+    context.user_data["volume"] = truck.volume_m3
+    context.user_data["body_type"] = truck.body_type
+    context.user_data["certifications"] = list(truck.certifications or [])
+    context.user_data["accepted_cargo_types"] = set(truck.accepted_cargo_types or ["general"])
+    context.user_data["min_rate"] = truck.min_rate
+    context.user_data["origins"] = truck.origin_cities
+    context.user_data["destinations"] = truck.destination_cities
+    return await steps.show_state(update, context, TONNAGE)
+
+
+async def handle_menu_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    profile_id = _extract_id(update)
+    user = update.effective_user
+    if profile_id is None:
+        return MENU
+    async with async_session_factory() as session:
+        deleted = await TruckRepository(session).delete(profile_id, user.id)
+    if update.callback_query:
+        await update.callback_query.answer("Удалено" if deleted else "Не найдено")
+    return await menu.render_menu(update, context)
+
+
+async def handle_menu_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    profile_id = _extract_id(update)
+    if profile_id is None:
+        return MENU
+    return await menu.render_search_window(update, context, profile_id)
+
+
+async def handle_menu_close(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text("👌 Меню закрыто. Открыть снова — /truck")
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+# --- Мастер настройки ---
 
 
 async def handle_tonnage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -194,7 +282,7 @@ async def handle_confirm_save(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     data = context.user_data
     profile_data = TruckProfileData(
-        truck_count=data.get("truck_count", 1),
+        label=data.get("label", "Фура"),
         tonnage_tons=data["tonnage"],
         volume_m3=data["volume"],
         body_type=data.get("body_type", "any"),
@@ -205,38 +293,80 @@ async def handle_confirm_save(update: Update, context: ContextTypes.DEFAULT_TYPE
         destination_cities=data.get("destinations"),
     )
 
+    editing_id = data.get("editing_truck_id")
     async with async_session_factory() as session:
-        user_repo = UserRepository(session)
         truck_repo = TruckRepository(session)
-        await user_repo.get_or_create(
-            telegram_user_id=user.id,
-            username=user.username,
-            first_name=user.first_name,
-        )
-        await truck_repo.upsert(user.id, profile_data)
+        try:
+            if editing_id:
+                saved = await truck_repo.update(editing_id, user.id, profile_data)
+            else:
+                saved = await truck_repo.create(user.id, profile_data)
+        except ValueError as exc:
+            if str(exc) == "truck_limit_reached" and update.callback_query:
+                await update.callback_query.answer(
+                    f"Достигнут лимит {MAX_TRUCKS_PER_USER} фур.", show_alert=True
+                )
+                return await menu.render_menu(update, context)
+            raise
 
-    summary = build_summary(data)
-    final_text = (
-        f"✅ *Профиль фуры сохранён!*\n\n"
-        f"{summary.split('Сохранить профиль?')[0].strip()}\n\n"
-        "Теперь вы будете получать подходящие заявки."
-    )
-    if update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.edit_message_text(final_text, parse_mode="Markdown")
-    logger.info("Truck profile saved for user %s", user.id)
-    context.user_data.clear()
-    return ConversationHandler.END
+    if not saved:
+        return await menu.render_menu(update, context)
+
+    logger.info("Truck profile %s saved for user %s", saved.id, user.id)
+    context.user_data["time_truck_id"] = saved.id
+    return await menu.render_search_window(update, context, saved.id)
 
 
 async def handle_confirm_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    return await steps.show_state(update, context, TRUCK_COUNT)
+    return await steps.show_state(update, context, TONNAGE)
+
+
+# --- Время поиска ---
+
+
+async def handle_search_window_set(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    user = update.effective_user
+    if not query or not query.data:
+        return SEARCH_WINDOW
+
+    # формат: truck:time:set:{id}:{days}
+    parts = query.data.split(":")
+    try:
+        profile_id = int(parts[3])
+        days = int(parts[4])
+    except (IndexError, ValueError):
+        await query.answer("Ошибка")
+        return SEARCH_WINDOW
+
+    days = max(1, min(days, 2))
+    async with async_session_factory() as session:
+        truck = await TruckRepository(session).set_search_window(profile_id, user.id, days)
+
+    if not truck:
+        return await menu.render_menu(update, context)
+
+    await query.answer(f"Поиск включён на {days} дн.")
+    return await menu.render_menu(update, context)
+
+
+# --- Навигация ---
 
 
 async def handle_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    current = context.user_data.get("_truck_state", TRUCK_COUNT)
+    current = context.user_data.get("_truck_state", MENU)
     return await go_back(update, context, current)
 
 
 async def handle_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return await cancel_dialog(update, context)
+
+
+def _extract_id(update: Update) -> int | None:
+    query = update.callback_query
+    if not query or not query.data:
+        return None
+    try:
+        return int(query.data.rsplit(":", 1)[-1])
+    except ValueError:
+        return None

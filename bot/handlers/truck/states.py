@@ -1,5 +1,5 @@
 (
-    TRUCK_COUNT,
+    MENU,
     TONNAGE,
     VOLUME,
     BODY_TYPE,
@@ -9,11 +9,12 @@
     ORIGINS,
     DESTINATIONS,
     CONFIRM,
-) = range(10)
+    SEARCH_WINDOW,
+) = range(11)
 
+# Карта «Назад» внутри мастера настройки
 PREVIOUS_STATE: dict[int, int | None] = {
-    TRUCK_COUNT: None,
-    TONNAGE: TRUCK_COUNT,
+    TONNAGE: MENU,
     VOLUME: TONNAGE,
     BODY_TYPE: VOLUME,
     CERTIFICATIONS: BODY_TYPE,

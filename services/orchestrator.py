@@ -7,7 +7,7 @@ from core.logger import logger
 from core.redis_client import RedisClient
 from models.db_models import CargoRequest
 from repositories.request_repository import RequestRepository
-from repositories.truck_repository import UserRepository
+from repositories.truck_repository import TruckRepository
 from services.filtering import FilteringService
 from sources.ati_su import DISPLAY_NAME as ATI_DISPLAY
 from sources.base import BaseSource
@@ -55,7 +55,7 @@ class SourceOrchestrator:
 
         async with async_session_factory() as session:
             request_repo = RequestRepository(session)
-            user_repo = UserRepository(session)
+            truck_repo = TruckRepository(session)
 
             for item in parsed:
                 content_hash = RedisClient.compute_hash(item.dedup_payload())
@@ -72,23 +72,33 @@ class SourceOrchestrator:
                 await self._redis.mark_seen(content_hash)
                 new_count += 1
 
-                await self._notify_matching_users(user_repo, saved)
+                await self._notify_matching_users(truck_repo, saved)
 
         return new_count
 
-    async def _notify_matching_users(self, user_repo: UserRepository, request: CargoRequest) -> None:
+    async def _notify_matching_users(self, truck_repo: TruckRepository, request: CargoRequest) -> None:
         if not self._on_match:
             return
 
-        users = await user_repo.get_all_with_trucks()
-        for user in users:
-            if user.truck_profile and self._filtering.matches(request, user.truck_profile):
+        # Активные фуры с непросроченным окном поиска
+        profiles = await truck_repo.get_active_profiles()
+
+        # Одна заявка может подойти под несколько фур одного юзера — шлём один раз
+        notified_users: set[int] = set()
+        for profile in profiles:
+            if not profile.user:
+                continue
+            telegram_id = profile.user.telegram_user_id
+            if telegram_id in notified_users:
+                continue
+            if self._filtering.matches(request, profile):
+                notified_users.add(telegram_id)
                 try:
-                    await self._on_match(user.telegram_user_id, request)
+                    await self._on_match(telegram_id, request)
                 except Exception as exc:
                     logger.error(
                         "Failed to notify user %s: %s",
-                        user.telegram_user_id,
+                        telegram_id,
                         exc,
                         exc_info=True,
                     )

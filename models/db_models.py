@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -38,14 +38,21 @@ class User(Base):
     first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    truck_profile: Mapped["TruckProfile | None"] = relationship(back_populates="user", uselist=False)
+    truck_profiles: Mapped[list["TruckProfile"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+# Максимум фур на одного пользователя (будет меняться в будущем)
+MAX_TRUCKS_PER_USER = 3
 
 
 class TruckProfile(Base):
     __tablename__ = "truck_profiles"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    label: Mapped[str] = mapped_column(String(100), default="Фура", server_default="Фура")
     truck_count: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     tonnage_tons: Mapped[float] = mapped_column(Float)
     volume_m3: Mapped[float] = mapped_column(Float)
@@ -60,11 +67,17 @@ class TruckProfile(Base):
     min_rate_per_km: Mapped[float | None] = mapped_column(Float, nullable=True)
     origin_cities: Mapped[str | None] = mapped_column(Text, nullable=True)
     destination_cities: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
+    search_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    user: Mapped["User"] = relationship(back_populates="truck_profile")
+    user: Mapped["User"] = relationship(back_populates="truck_profiles")
 
 
 class CargoRequest(Base):
