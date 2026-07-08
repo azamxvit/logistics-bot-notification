@@ -1,31 +1,38 @@
-import re
-from urllib.parse import urljoin
+import json
+from datetime import datetime
+from typing import Any
 
-from bs4 import BeautifulSoup
+import aiohttp
 
 from core.logger import logger
 from models.schemas import CargoRequestCreate
+from sources import ati_auth
 from sources.base import BaseSource
-from sources.hybrid_fetcher import HybridFetcher
-from sources.parsing import (
-    extract_inline_json_objects,
-    extract_route,
-    find_cargo_records,
-    map_record_to_fields,
-    parse_float,
-)
+from sources.http_fetcher import HttpFetcher
 
 SOURCE_NAME = "ati_su"
 DISPLAY_NAME = "ATI.SU"
 
-CARD_SELECTORS = (
-    "[data-testid='load-item']",
-    ".load-item",
-    "[class*='LoadItem']",
-    "[class*='load-card']",
-    "[class*='cargo-item']",
-    "article",
-)
+# Валюты ATI по id (поле rate.currency)
+CURRENCY_SYMBOLS = {
+    0: "",
+    1: "₽",
+    2: "$",
+    3: "€",
+    4: "Br",
+    21: "₸",
+    23: "₸",
+}
+
+
+def _parse_date(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return dt.strftime("%d.%m")
+    except ValueError:
+        return None
 
 
 class AtiSuSource(BaseSource):
@@ -34,160 +41,129 @@ class AtiSuSource(BaseSource):
 
     def __init__(self, settings=None) -> None:
         super().__init__(settings)
-        self._fetcher = HybridFetcher(self.settings)
+        self._http = HttpFetcher(self.settings)
 
     async def fetch(self) -> str:
-        if self.settings.ati_su_api_url:
-            payload = await self._fetcher.fetch_json(
-                self.settings.ati_su_api_url,
-                cookie=self.settings.ati_su_cookie or None,
+        payload = self.settings.ati_su_payload
+        cookie = await ati_auth.get_cookie(self.settings)
+        if not cookie:
+            logger.warning(
+                "[ati_su] Нет cookie ATI. "
+                "Задайте ATI_SU_COOKIE или ATI_SU_LOGIN/ATI_SU_PASSWORD."
             )
-            if payload is not None:
-                import json
 
-                return json.dumps(payload, ensure_ascii=False)
+        try:
+            data = await self._http.post_json(
+                self.settings.ati_su_api_url,
+                payload,
+                cookie=cookie,
+            )
+        except aiohttp.ClientResponseError as exc:
+            if exc.status not in (401, 403):
+                raise
 
-        return await self._fetcher.fetch_html(
-            self.settings.ati_su_url,
-            cookie=self.settings.ati_su_cookie or None,
-            locale="ru-RU",
-            wait_selector=", ".join(CARD_SELECTORS[:3]),
-        )
+            logger.warning("[ati_su] Сессия ATI истекла (%s), пробую перелогин", exc.status)
+            ati_auth.invalidate()
+            fresh_cookie = await ati_auth.get_cookie(self.settings, force=True)
+            if not fresh_cookie:
+                raise
 
-    def parse(self, raw_html: str) -> list[CargoRequestCreate]:
-        json_payload = HybridFetcher.try_parse_json_text(raw_html)
-        if json_payload is not None:
-            from_json = self._parse_from_json(json_payload)
-            if from_json:
-                return from_json
+            data = await self._http.post_json(
+                self.settings.ati_su_api_url,
+                payload,
+                cookie=fresh_cookie,
+            )
+        return json.dumps(data, ensure_ascii=False)
 
-        results = self._parse_html_cards(raw_html)
-        if results:
-            return results
+    def parse(self, raw: str) -> list[CargoRequestCreate]:
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.error("[ati_su] Ответ не является JSON")
+            return []
 
-        return self._parse_inline_json(raw_html)
+        loads = data.get("loads") if isinstance(data, dict) else None
+        if not loads:
+            logger.info("[ati_su] В ответе нет заявок (loads пуст)")
+            return []
 
-    def _parse_from_json(self, payload: dict | list) -> list[CargoRequestCreate]:
-        records = find_cargo_records(payload)
         results: list[CargoRequestCreate] = []
-        for record in records:
-            item = self._record_to_request(record)
-            if item:
-                results.append(item)
-        return results
-
-    def _parse_html_cards(self, raw_html: str) -> list[CargoRequestCreate]:
-        soup = BeautifulSoup(raw_html, "lxml")
-        results: list[CargoRequestCreate] = []
-
-        cards: list = []
-        for selector in CARD_SELECTORS:
-            cards = soup.select(selector)
-            if cards:
-                break
-
-        for card in cards:
+        for item in loads:
             try:
-                parsed = self._parse_card(card)
+                parsed = self._parse_load(item)
                 if parsed:
                     results.append(parsed)
             except Exception as exc:
-                logger.debug("[ati_su] Card parse error: %s", exc)
+                logger.debug("[ati_su] Ошибка разбора заявки: %s", exc)
         return results
 
-    def _parse_inline_json(self, raw_html: str) -> list[CargoRequestCreate]:
-        results: list[CargoRequestCreate] = []
-        for obj in extract_inline_json_objects(raw_html):
-            for record in find_cargo_records(obj):
-                item = self._record_to_request(record)
-                if item:
-                    results.append(item)
-        return results
-
-    def _record_to_request(self, record: dict) -> CargoRequestCreate | None:
-        fields = map_record_to_fields(record)
-        if not fields.get("origin_city") or not fields.get("destination_city"):
-            return None
-
-        rate = fields.get("rate_amount")
-        distance = fields.get("distance_km")
-        rate_per_km = round(rate / distance, 1) if rate and distance else None
-
-        return CargoRequestCreate(
-            external_id=fields.get("external_id"),
-            source=SOURCE_NAME,
-            origin_city=fields["origin_city"],
-            destination_city=fields["destination_city"],
-            distance_km=distance,
-            rate_amount=rate,
-            rate_currency="₽",
-            rate_per_km=rate_per_km,
-            cargo_description=fields.get("cargo_description"),
-            cargo_weight_tons=fields.get("cargo_weight_tons"),
-            cargo_volume_m3=fields.get("cargo_volume_m3"),
-            loading_date=fields.get("loading_date"),
-            company_name=fields.get("company_name"),
-            source_url=fields.get("source_url"),
-        )
-
-    def _parse_card(self, card) -> CargoRequestCreate | None:
-        text = card.get_text(" ", strip=True)
-        if len(text) < 20:
-            return None
-
-        route_el = (
-            card.select_one("[class*='route']")
-            or card.select_one("[data-testid='route']")
-            or card.select_one("a[href*='load']")
-        )
-        route_text = route_el.get_text(" ", strip=True) if route_el else text[:120]
-        origin, destination, distance = extract_route(route_text)
+    def _parse_load(self, item: dict[str, Any]) -> CargoRequestCreate | None:
+        loading = item.get("loading") or {}
+        unloading = item.get("unloading") or {}
+        origin = (loading.get("location") or {}).get("city")
+        destination = (unloading.get("location") or {}).get("city")
         if not origin or not destination:
             return None
 
-        rate_el = card.select_one("[class*='rate'], [class*='price'], [class*='Rate']")
-        rate_text = rate_el.get_text(" ", strip=True) if rate_el else ""
-        rate_amount = parse_float(rate_text)
-        per_km_match = re.search(r"(\d[\d\s]*)\s*₽?\s*/\s*км", text, re.IGNORECASE)
-        rate_per_km = parse_float(per_km_match.group(1)) if per_km_match else None
+        route = item.get("route") or {}
+        distance = route.get("distance") or None
 
-        cargo_el = card.select_one("[class*='cargo'], [class*='Cargo'], [class*='goods']")
-        cargo_text = cargo_el.get_text(" ", strip=True) if cargo_el else ""
-        weight_match = re.search(r"(\d+(?:[.,]\d+)?)\s*т", text, re.IGNORECASE)
-        volume_match = re.search(r"(\d+(?:[.,]\d+)?)\s*м[³3]", text, re.IGNORECASE)
+        load = item.get("load") or {}
+        weight = load.get("weight") or None
+        volume = load.get("volume") or None
+        cargo_desc = load.get("cargoType") or None
+        adr = load.get("adr") or 0
+        cargo_type = "hazardous" if adr and adr > 0 else None
 
-        date_el = card.select_one("[class*='date'], [class*='loading'], time")
-        loading_date = date_el.get_text(" ", strip=True) if date_el else None
-        time_match = re.search(r"(\d{1,2}:\d{2})", text)
-        loading_time = time_match.group(1) if time_match else None
+        rate_amount, currency = self._extract_rate(item.get("rate") or {})
+        rate_per_km = None
+        if rate_amount and distance:
+            rate_per_km = round(rate_amount / distance, 1)
 
-        company_el = card.select_one("[class*='company'], [class*='firm'], [class*='owner']")
-        company_name = company_el.get_text(" ", strip=True) if company_el else None
-        rating_match = re.search(r"(\d(?:[.,]\d+)?)\s*(?:⭐|★|балл)", text)
-        company_rating = parse_float(rating_match.group(1)) if rating_match else None
+        firm = item.get("firm") or {}
+        company_name = firm.get("name") or None
+        company_rating = (firm.get("rating") or {}).get("score")
 
-        link = card.select_one("a[href]")
-        source_url = urljoin(self.settings.ati_su_url, link["href"]) if link and link.get("href") else None
-        external_id = None
-        if source_url:
-            id_match = re.search(r"/(\d{5,})", source_url)
-            external_id = id_match.group(1) if id_match else None
+        external_id = item.get("id")
+        source_url = f"https://loads.ati.su/gruz/{external_id}" if external_id else None
+
+        loading_date = _parse_date(loading.get("firstDate"))
+        loading_time = (loading.get("time") or "").strip() or None
 
         return CargoRequestCreate(
-            external_id=external_id,
+            external_id=str(external_id) if external_id else None,
             source=SOURCE_NAME,
-            origin_city=origin,
-            destination_city=destination,
-            distance_km=distance,
-            rate_amount=rate_amount,
-            rate_currency="₽",
+            origin_city=origin.strip(),
+            destination_city=destination.strip(),
+            distance_km=float(distance) if distance else None,
+            rate_amount=float(rate_amount) if rate_amount else None,
+            rate_currency=currency,
             rate_per_km=rate_per_km,
-            cargo_description=cargo_text or None,
-            cargo_weight_tons=parse_float(weight_match.group(1)) if weight_match else None,
-            cargo_volume_m3=parse_float(volume_match.group(1)) if volume_match else None,
+            cargo_description=cargo_desc,
+            cargo_type=cargo_type,
+            cargo_weight_tons=float(weight) if weight else None,
+            cargo_volume_m3=float(volume) if volume else None,
             loading_date=loading_date,
             loading_time=loading_time,
             company_name=company_name,
-            company_rating=company_rating,
+            company_rating=float(company_rating) if company_rating else None,
             source_url=source_url,
         )
+
+    def _extract_rate(self, rate: dict[str, Any]) -> tuple[float | None, str]:
+        currency_id = rate.get("currency", 0)
+        currency = CURRENCY_SYMBOLS.get(currency_id, "")
+
+        amount: float | None = None
+        for key in ("priceNds", "priceNoNds", "price"):
+            value = rate.get(key)
+            if value:
+                amount = value
+                break
+
+        if amount is None:
+            rates_with_vat = rate.get("ratesWithVat") or []
+            if rates_with_vat:
+                amount = rates_with_vat[0].get("rateWithVat")
+
+        return (amount or None), currency

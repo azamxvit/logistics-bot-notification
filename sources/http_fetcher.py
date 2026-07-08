@@ -54,3 +54,28 @@ class HttpFetcher:
             async with session.get(url, allow_redirects=True) as response:
                 response.raise_for_status()
                 return await response.json()
+
+    async def post_json(
+        self,
+        url: str,
+        payload: dict | list,
+        *,
+        cookie: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> dict | list:
+        headers = {
+            **DEFAULT_HEADERS,
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+            "Origin": "https://loads.ati.su",
+            "Referer": "https://loads.ati.su/",
+            **(extra_headers or {}),
+        }
+        if cookie:
+            headers["Cookie"] = cookie
+
+        timeout = aiohttp.ClientTimeout(total=self._settings.playwright_timeout_ms / 1000)
+        async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
+            async with session.post(url, json=payload, allow_redirects=True) as response:
+                response.raise_for_status()
+                return await response.json()

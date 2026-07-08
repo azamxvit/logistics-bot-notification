@@ -78,8 +78,20 @@ class Settings(BaseSettings):
     source_retry_delay_sec: int = 5
 
     ati_su_url: str = "https://loads.ati.su/"
-    ati_su_api_url: str = ""
+    ati_su_api_url: str = "https://loads.ati.su/webapi/v1.0/loads/search"
     ati_su_cookie: str = ""
+    # Автологин через Playwright (получает cookie сам, не протухает)
+    ati_su_login: str = ""
+    ati_su_password: str = ""
+    ati_su_login_url: str = "https://id.ati.su/login/"
+    ati_su_session_ttl_min: int = 60
+    # Гео-ID бирж ATI: 50 = Китай, 10 = Казахстан (type 0 = страна)
+    ati_su_from_geo_id: int = 50
+    ati_su_to_geo_id: int = 10
+    ati_su_items_per_page: int = 10
+    # Полный JSON payload (переопределяет from/to), если задан
+    ati_su_search_payload: str = ""
+
     deliver_kz_url: str = "https://deliver.kz/ru/cargo"
     deliver_kz_api_url: str = ""
     deliver_kz_cookie: str = ""
@@ -150,6 +162,32 @@ class Settings(BaseSettings):
     @property
     def database_host_label(self) -> str:
         return urlparse(self.database_url).hostname or "unknown"
+
+    @property
+    def ati_su_payload(self) -> dict:
+        import json
+
+        if self.ati_su_search_payload.strip():
+            try:
+                return json.loads(self.ati_su_search_payload)
+            except json.JSONDecodeError:
+                pass
+
+        return {
+            "filter": {
+                "from": {"id": self.ati_su_from_geo_id, "type": 0, "exact_only": True},
+                "to": {"id": self.ati_su_to_geo_id, "type": 0, "exact_only": True},
+                "dates": {"dateOption": "today-plus"},
+                "extraParams": 0,
+                "sortingType": 2,
+                "boardList": [],
+                "cargoTypes": [],
+                "excludeTenders": False,
+            },
+            "exclude_geo_dicts": True,
+            "page": 1,
+            "items_per_page": self.ati_su_items_per_page,
+        }
 
 
 @lru_cache

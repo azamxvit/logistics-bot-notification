@@ -1,3 +1,4 @@
+from models.db_models import CargoType
 
 _HAZARDOUS_KEYWORDS = (
     "адр", "опасн", "взрыво", "химическ", "горюч", "токсич", "радиоактив",
@@ -13,19 +14,19 @@ def detect_cargo_type(description: str | None, explicit: str | None = None) -> s
     if explicit and explicit in {c.value for c in CargoType}:
         return explicit
     if not description:
-        return CargoType.GENERAL
+        return CargoType.GENERAL.value
 
     text = description.lower()
     if any(keyword in text for keyword in _HAZARDOUS_KEYWORDS):
-        return CargoType.HAZARDOUS
+        return CargoType.HAZARDOUS.value
     if any(keyword in text for keyword in _PERISHABLE_KEYWORDS):
-        return CargoType.PERISHABLE_FOOD
+        return CargoType.PERISHABLE_FOOD.value
     if any(keyword in text for keyword in _FRAGILE_KEYWORDS):
-        return CargoType.FRAGILE
-    return CargoType.GENERAL
+        return CargoType.FRAGILE.value
+    return CargoType.GENERAL.value
 
 
 def cargo_requires_certification(cargo_type: str) -> set[str]:
-    if cargo_type == CargoType.HAZARDOUS:
+    if cargo_type == CargoType.HAZARDOUS.value:
         return {"adr"}
     return set()
